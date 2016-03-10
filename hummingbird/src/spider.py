@@ -1,3 +1,4 @@
+# coding:utf-8
 '''
 Created on 2015年12月6日
 
@@ -7,142 +8,128 @@ Created on 2015年12月6日
 import urllib.request
 from bs4 import BeautifulSoup
 import mysql.connector
-from mysql.connector import errorcode
 import time
-from asyncio.tasks import sleep
+import threading
+import queue
+import configparser
 
-#快线2号火车站始发
-LINE_CID = '175ecd8d-c39d-4116-83ff-109b946d7cb4'
-LINE_GUID = '1aa773c8-e865-4847-95a1-f4c956ae02ef'
-DB_NAME = 'BusLineDatabase'
-DB_ADDR = '192.168.137.128'
-DB_USER = 'spider'
-DB_PWD = 'spider'
-#Table holding bus arriving time of one bus line.
-DB_DATA_TABLE = 'KX2HHCZ'
-#Table holding platforms of one bus line.
-DB_PTFM_TABLE = 'KX2HHCZ_PTFM'
-#Time to sleep between two fetch
+#Time to sleep between two fetch process
 TIME_INTERVAL = 60
 
-TABLES = {}
-TABLES[DB_DATA_TABLE] = (
-    "CREATE TABLE IF NOT EXISTS " + DB_DATA_TABLE + '('
-    "platform_id CHAR(3) NOT NULL,"
-    "bus_id VARCHAR(10) NOT NULL,"
-    "arrive_time DATETIME NOT NULL)"
-    "ENGINE=InnoDB DEFAULT CHARSET=utf8")
-
-TABLES[DB_PTFM_TABLE] = (
-    "CREATE TABLE IF NOT EXISTS " + DB_PTFM_TABLE + '('
-    "platform_name VARCHAR(50) NOT NULL,"
-    "platform_id CHAR(3) NOT NULL)"
-    "ENGINE=InnoDB DEFAULT CHARSET=utf8")
-
-def create_db_tables(tabs, csr):
-    for name, ddl in tabs.items():
+class writeDatabseThread(threading.Thread):
+    def __init__(self, db_user, db_pwd, db_addr, db_name, bus_data_queue):
+        threading.Thread.__init__(self)
+        self.db_user = db_user
+        self.db_pwd = db_pwd
+        self.db_addr = db_addr
+        self.db_name = db_name
+        self.bus_data_queue = bus_data_queue
+        self.DB_DATA_TABLE = 'BusLineDataTable'
+        
+    def create_db_connection(self):         
         try:
-            print("Creating table {}: ".format(name), end='')
-            #print(ddl)
-            csr.execute(ddl)
+            cnx = mysql.connector.connect(user=self.db_user, password=self.db_pwd, host=self.db_addr, database=self.db_name)
         except mysql.connector.Error as err:
-            print(err.msg)
-        else:
-            print("OK")
-    csr.close()
-    
-def drop_db_tables(csr, db_name):
-    DROP_TABLE_DDL = ("DROP TABLE " + db_name)
-    try:
-        print('Dropping table <' + db_name + '>: ', end='')
-        csr.execute(DROP_TABLE_DDL)
-    except mysql.connector.Error as err:
-        print(err.msg)
-    else:
-        print("OK")
-    
-def create_db_connection():         
-    try:
-        cnx = mysql.connector.connect(user=DB_USER, password=DB_PWD,
-                                    host=DB_ADDR,
-                                    database=DB_NAME)
-    except mysql.connector.Error as err:
-        if err.errno == errorcode.ER_ACCESS_DENIED_ERROR:
-            print("Something is wrong with your user name or password")
-        elif err.errno == errorcode.ER_BAD_DB_ERROR:
-            print("Database does not exist")
-        else:
-            print(err)
-        return None
-    return cnx
-
-INSERT_TIME_DDL = ("INSERT INTO " + DB_DATA_TABLE + " "
-               "(platform_id, bus_id, arrive_time) "
-               "VALUES (%s, %s, %s)")
-INSERT_PTFM_DDL = ("INSERT INTO " + DB_PTFM_TABLE + " "
-               "(platform_name, platform_id) "
-               "VALUES (%s, %s)")
-#TODO: Add Error handling.
-def insert_db_time_data(cnx, ptfm_id, bus_id, arv_time):
-    data_item = (ptfm_id+'', bus_id+'', arv_time)
-    #print(type((ptfm_id.string).unicode()))
-    #print(ptfm_id.string)
-    cnx.cursor().execute(INSERT_TIME_DDL, data_item)
-    cnx.commit()
-
-#TODO: Add Error handling.
-def insert_db_ptfm_data(cnx, ptfm_name, ptfm_id):
-    ptfm_item = (ptfm_name+'', ptfm_id+'')
-    cnx.cursor().execute(INSERT_PTFM_DDL, ptfm_item)
-    cnx.commit()
-    
-def fetch_data():
-    try:
-        text=urllib.request.urlopen('http://www.szjt.gov.cn/BusQuery/APTSLine.aspx?cid=' + LINE_CID +
-                                    '&LineGuid=' + LINE_GUID).read()
-    except urllib.error.URLError as err:
-        if hasattr(err, "reason"):
-            print("Failed to reach the server, reason: ", err.reason)
+            if err.errno == mysql.connector.errorcode.ER_ACCESS_DENIED_ERROR:
+                print("Something is wrong with your user name or password")
+            elif err.errno == mysql.connector.errorcode.ER_BAD_DB_ERROR:
+                print("Database does not exist")
+            else:
+                print(err)
             return None
-        elif hasattr(err,"code"):
-            print("The server couldn't fulfill the request, error code: ", err.code)
-            return None
-        else:
-            return None
-    soup=BeautifulSoup(text , "html.parser")
-    table=[]
-    line=[]
-    for tr in soup.find('table'):
-        if (tr.contents[0].contents[0].string == '站台') :
-            continue
-        tag_a=tr.contents[0]
-        station=tag_a.contents[0]
-        station_name=station.string
-        #print(type(station_name))
-        #print(station_name)
-        line.append(station_name.string)
-        for i in range(1,4):
-            td=tr.contents[i]
-            #print td.string
-            line.append(td.string)
-        table.append(line)
-        #print(line)
-        line=[]
-    #print(table)
-    return table
+        return cnx
+    
+    def create_db_tables(self, csr):
+        TABLES = {}
+        TABLES['BusLineDatabase'] = ("CREATE TABLE IF NOT EXISTS " + self.DB_DATA_TABLE + '('
+                                 "line_name VARCHAR(50) NOT NULL,"
+                                 "platform_name VARCHAR(20) NOT NULL,"
+                                 "platform_id CHAR(3) NOT NULL,"
+                                 "bus_id VARCHAR(10) NOT NULL,"
+                                 "arrive_time DATETIME NOT NULL)"
+                                 "ENGINE=InnoDB DEFAULT CHARSET=utf8")
+        for name, ddl in TABLES.items():
+            try:
+                print("Creating table {}: ".format(name), end='')
+                #print(ddl)
+                csr.execute(ddl)
+            except mysql.connector.Error as err:
+                print(err.msg)
+            else:
+                print("OK")
+        csr.close()
+    
+    def run(self):
+        INSERT_DATA_DDL = ("INSERT INTO " + self.DB_DATA_TABLE + " "
+               "(line_name, platform_name, platform_id, bus_id, arrive_time) "
+               "VALUES (%s, %s, %s, %s, %s)")
+        mysqlCon = self.create_db_connection()
+        self.create_db_tables(mysqlCon.cursor())
+        mysqlCon.commit()
+        while True:
+            line, platform, ptfm_id, bus_id, time = self.bus_data_queue.get()
+            try:
+                mysqlCon.cursor().execute(INSERT_DATA_DDL, (line, platform, ptfm_id, bus_id, time))
+                mysqlCon.commit()
+                print('Write database:', line, platform, ptfm_id, bus_id, time)
+            except Exception as err:
+                print('Write database error:', err)
+                self.bus_data_queue.put((line, platform, ptfm_id, bus_id, time))
+            self.bus_data_queue.task_done()
+        mysqlCon.close()
+    
+class fetchLineInfoThread(threading.Thread):
+    #eg. url_tuple = ('快线2号(火车站=>独墅湖高教区首末站)', '175ecd8d-c39d-4116-83ff-109b946d7cb4', '1aa773c8-e865-4847-95a1-f4c956ae02ef')
+    #    prev_data = {"快线2号(火车站=>独墅湖高教区首末站)":table[][]}
+    def __init__(self, prev_data_dict, line_queue, bus_data_queue):
+        threading.Thread.__init__(self)
+        self.prev_data_dict = prev_data_dict
+        self.line_queue = line_queue
+        self.bus_data_queue = bus_data_queue
+        
+    def fetch_data(self, url_tuple):
+        #url = 'http://www.szjt.gov.cn/BusQuery/APTSLine.aspx?cid=' + url_tuple[1] + '&LineGuid=' + url_tuple[2] + '&LineInfo=' + url_tuple[0]
+        url = 'http://www.szjt.gov.cn/BusQuery/APTSLine.aspx?cid=' + url_tuple[1] + '&LineGuid=' + url_tuple[2]
+        req = urllib.request.Request(url, headers={'user-agent': 'Mozilla/5.0'})
+        try:
+            html = urllib.request.urlopen(req).read()
+        except urllib.error.URLError as err:
+            if hasattr(err, "reason"):
+                print("Failed to reach the server, reason: ", err.reason)
+                return None
+            elif hasattr(err,"code"):
+                print("The server couldn't fulfill the request, error code: ", err.code)
+                return None
+            else:
+                print('Unknown error while fetching html data:', err)
+                return None
+        soup = BeautifulSoup(html, "html.parser")
+        table = []
+        line = []
+        if(soup.find('table') == None):
+            print('No response from server, wait for next round...')
+            return table
+        
+        for tr in soup.find('table'):
+            if (tr.contents[0].contents[0].string == '站台') :
+                continue
+            tag_a = tr.contents[0]
+            station = tag_a.contents[0]
+            station_name = station.string
+            line.append(station_name.string)
+            for i in range(1,4):
+                td = tr.contents[i]
+                #print td.string
+                line.append(td.string)
+            table.append(line)
+            #print(line)
+            line = []
+        #print(table)
+        return table
 
-def flush_ptfm(con, tab):
-    for item in tab:
-        print(item)
-        insert_db_ptfm_data(con, item[0], item[1])
-            
-def spider_loop(con, prev):
-    prev_data = prev
-    while(True):
-        time.sleep(TIME_INTERVAL)
-        next_data = fetch_data()
-        if next_data == None:
-            continue
+    def filter_data(self, next_tab, url_tuple):
+        prev_data = self.prev_data_dict[url_tuple[0]]
+        next_data = next_tab
         for i_next in next_data:
             unmoved = False
             if i_next[2] != None:
@@ -152,28 +139,71 @@ def spider_loop(con, prev):
                     if (i_next[1]==i_prev[1] and i_next[2]==i_prev[2] and i_next[3]==i_prev[3]):
                         unmoved = True
                 if unmoved == False:
-                    insert_db_time_data(con, i_next[1], i_next[2],
-                                time.strftime('%Y-%m-%d',time.localtime(time.time())) + ' ' + i_next[3])
-        prev_data = next_data
+                    self.bus_data_queue.put((url_tuple[0], i_next[0]+'', i_next[1]+'', i_next[2]+'',
+                                         time.strftime('%Y-%m-%d',time.localtime(time.time())) + ' ' + i_next[3]))
+                    print('Put data into queue: ', url_tuple[0], i_next)
+        self.prev_data_dict[url_tuple[0]] = next_data
+        
+    def run(self):
+        while True:
+            url_tuple = self.line_queue.get()
+            self.line_queue.task_done()
+            print('Got url tuple from queue: ', url_tuple)
+            raw_table = self.fetch_data(url_tuple)
+            self.filter_data(raw_table, url_tuple)
+            print('Task finished, sleeping...')
+            time.sleep(TIME_INTERVAL)
+            self.line_queue.put(url_tuple)
     
 #Main function.
-cnx = create_db_connection()
-print("Connecting mysql server: ", end='')
-if cnx != None:
-    print('OK')
-else:
-    print('Failed')
-    exit()
-drop_db_tables(cnx.cursor(), DB_PTFM_TABLE)
-#drop_db_tables(cnx.cursor(), DB_DATA_TABLE)
-create_db_tables(TABLES, cnx.cursor())
-prev_buf = fetch_data()
-if prev_buf == None:
-    cnx.close()
-    exit()
-flush_ptfm(cnx, prev_buf)
-print('Spider started...')
-spider_loop(cnx, prev_buf)
-#cook_data(cnx, prev_buf)
-print('Close connection...')
-cnx.close()
+def work():
+    line_queue = queue.Queue(0)
+    bus_data_queue = queue.Queue(0)
+
+    conf = configparser.ConfigParser()
+    prev_data_dict = {}
+    try:
+        conf.read('spider.conf')
+        db_user = conf.get('BASIC', 'db_username')
+        db_pwd = conf.get('BASIC', 'db_password')
+        db_addr = conf.get('BASIC', 'db_address')
+        db_name = conf.get('BASIC', 'db_name')
+        thread_num = conf.get('BASIC', 'work_thread_num')
+    except configparser.Error as err:
+        print('Miss basic configuration: ', err)
+        exit(0)
+        
+    try:
+        for sec in conf:
+            if(sec == 'DEFAULT' or sec == 'BASIC'):
+                continue
+            #print(sec)
+            line_name = conf.get(sec, 'name')
+            line_cid = conf.get(sec, 'cid')
+            line_guid = conf.get(sec, 'guid')
+            line_queue.put((line_name, line_cid, line_guid))
+            prev_data_dict[line_name] = [] 
+    except configparser.Error as err:
+        print('Err read line configuration: ', err)
+        exit(0)
+
+    if(db_user == None or db_pwd == None or db_addr == None 
+       or db_name == None or thread_num == None):
+        print('Database configuration error, exit...')
+        exit(0)
+
+    w = writeDatabseThread(db_user, db_pwd, db_addr, db_name, bus_data_queue)
+    w.setDaemon(True)
+    print('Start database daemon')
+    w.start()
+    
+    for i in range(int(thread_num)):
+        r = fetchLineInfoThread(prev_data_dict, line_queue, bus_data_queue)
+        r.setDaemon(True)
+        r.start()
+        time.sleep(10)
+    
+    w.join()
+    
+if __name__ == '__main__':
+    work()
