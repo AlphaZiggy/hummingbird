@@ -1,4 +1,4 @@
-# coding:utf-8
+﻿#coding:utf-8
 '''
 Created on 2015年12月6日
 
@@ -12,9 +12,6 @@ import time
 import threading
 import queue
 import configparser
-
-#Time to sleep between two fetch process
-TIME_INTERVAL = 60
 
 class writeDatabseThread(threading.Thread):
     def __init__(self, db_user, db_pwd, db_addr, db_name, bus_data_queue):
@@ -81,11 +78,12 @@ class writeDatabseThread(threading.Thread):
 class fetchLineInfoThread(threading.Thread):
     #eg. url_tuple = ('快线2号(火车站=>独墅湖高教区首末站)', '175ecd8d-c39d-4116-83ff-109b946d7cb4', '1aa773c8-e865-4847-95a1-f4c956ae02ef')
     #    prev_data = {"快线2号(火车站=>独墅湖高教区首末站)":table[][]}
-    def __init__(self, prev_data_dict, line_queue, bus_data_queue):
+    def __init__(self, prev_data_dict, line_queue, bus_data_queue, fetch_interval):
         threading.Thread.__init__(self)
         self.prev_data_dict = prev_data_dict
         self.line_queue = line_queue
         self.bus_data_queue = bus_data_queue
+        self.fetch_interval = fetch_interval
         
     def fetch_data(self, url_tuple):
         #url = 'http://www.szjt.gov.cn/BusQuery/APTSLine.aspx?cid=' + url_tuple[1] + '&LineGuid=' + url_tuple[2] + '&LineInfo=' + url_tuple[0]
@@ -152,7 +150,7 @@ class fetchLineInfoThread(threading.Thread):
             raw_table = self.fetch_data(url_tuple)
             self.filter_data(raw_table, url_tuple)
             print('Task finished, sleeping...')
-            time.sleep(TIME_INTERVAL)
+            time.sleep(self.fetch_interval)
             self.line_queue.put(url_tuple)
     
 #Main function.
@@ -169,6 +167,7 @@ def work():
         db_addr = conf.get('BASIC', 'db_address')
         db_name = conf.get('BASIC', 'db_name')
         thread_num = conf.get('BASIC', 'work_thread_num')
+        fetch_interval = conf.get('BASIC', 'fetch_interval')
     except configparser.Error as err:
         print('Miss basic configuration: ', err)
         exit(0)
@@ -198,7 +197,7 @@ def work():
     w.start()
     
     for i in range(int(thread_num)):
-        r = fetchLineInfoThread(prev_data_dict, line_queue, bus_data_queue)
+        r = fetchLineInfoThread(prev_data_dict, line_queue, bus_data_queue, fetch_interval)
         r.setDaemon(True)
         r.start()
         time.sleep(10)
