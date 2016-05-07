@@ -83,7 +83,7 @@ class fetchLineInfoThread(threading.Thread):
         self.prev_data_dict = prev_data_dict
         self.line_queue = line_queue
         self.bus_data_queue = bus_data_queue
-        self.fetch_interval = fetch_interval
+        self.fetch_interval = int(fetch_interval)
         
     def fetch_data(self, url_tuple):
         #url = 'http://www.szjt.gov.cn/BusQuery/APTSLine.aspx?cid=' + url_tuple[1] + '&LineGuid=' + url_tuple[2] + '&LineInfo=' + url_tuple[0]
