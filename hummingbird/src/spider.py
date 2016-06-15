@@ -1,6 +1,7 @@
-﻿#coding:utf-8
+﻿#!/usr/bin/env python
+#coding: utf-8
 '''
-Created on 2015年12月6日
+Created on 2015/12/06
 
 @author: Alex Luan
 '''
@@ -12,6 +13,36 @@ import time
 import threading
 import queue
 import configparser
+import sys, os
+
+def daemonize (stdin='/dev/null', stdout='/dev/null', stderr='/dev/null'):  
+    try:   
+        pid = os.fork()   
+        if pid > 0:  
+            sys.exit(0)   #父进程退出  
+    except OSError as  e:   
+        sys.stderr.write ("fork #1 failed: (%d) %s\n" % (e.errno, e.strerror) )  
+        sys.exit(1)
+  
+    #os.chdir("/")  
+    os.umask(0)  
+    os.setsid()  
+  
+    try:   
+        pid = os.fork()   
+        if pid > 0:  
+            sys.exit(0)   #第二个父进程退出  
+    except OSError as e:   
+        sys.stderr.write ("fork #2 failed: (%d) %s\n" % (e.errno, e.strerror) )  
+        sys.exit(1)  
+  
+    for f in sys.stdout, sys.stderr: f.flush()  
+    si = open(stdin, 'r')  
+    so = open(stdout, 'wb+')  
+    se = open(stderr, 'wb+', 0)  
+    os.dup2(si.fileno(), sys.stdin.fileno())    #dup2函数原子化关闭和复制文件描述符  
+    os.dup2(so.fileno(), sys.stdout.fileno())
+    os.dup2(se.fileno(), sys.stderr.fileno())
 
 class writeDatabseThread(threading.Thread):
     def __init__(self, db_user, db_pwd, db_addr, db_name, bus_data_queue):
@@ -59,14 +90,15 @@ class writeDatabseThread(threading.Thread):
     def run(self):
         INSERT_DATA_DDL = ("INSERT INTO " + self.DB_DATA_TABLE + " "
                "(line_name, platform_name, platform_id, bus_id, arrive_time) "
-               "VALUES (%s, %s, %s, %s, %s)")
+               "VALUES (\"{0}\", \"{1}\", \"{2}\", \"{3}\", \"{4}\")")
         mysqlCon = self.create_db_connection()
         self.create_db_tables(mysqlCon.cursor())
         mysqlCon.commit()
         while True:
             line, platform, ptfm_id, bus_id, time = self.bus_data_queue.get()
             try:
-                mysqlCon.cursor().execute(INSERT_DATA_DDL, (line, platform, ptfm_id, bus_id, time))
+                #print(INSERT_DATA_DDL.format(line, platform, ptfm_id, bus_id, time))
+                mysqlCon.cursor().execute(INSERT_DATA_DDL.format(line, platform, ptfm_id, bus_id, time))
                 mysqlCon.commit()
                 print('Write database:', line, platform, ptfm_id, bus_id, time)
             except Exception as err:
@@ -204,5 +236,6 @@ def work():
     
     w.join()
     
-if __name__ == '__main__':
-    work()
+if __name__ == "__main__":  
+      daemonize('/dev/null','/tmp/spider_stdout.log','/tmp/spider_error.log')  
+      work()  
