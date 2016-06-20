@@ -165,12 +165,13 @@ class dbHandler():
         mysqlCon.close()
         return getResult
 
-    def add_traffic_info(self, phoneNum, latitude, longitude, timestamp, type, level, detail):
+    def add_traffic_info(self, phoneNum, latitude, longitude, address, timestamp, type, level, detail):
         '''
         ("CREATE TABLE IF NOT EXISTS " + self.DB_USER_REPORTED_TABLE + '('
                                   "phone_num VARCHAR(20) NOT NULL PRIMARY KEY,"
                                   "latitude DOUBLE NOT NULL,"
                                   "longitude DOUBLE NOT NULL,"
+                                  "address VARCHAR(100) NOT NULL,"
                                   "report_time DATETIME NOT NULL,"
                                   "type VARCHAR(20) NOT NULL,"
                                   "level VARCHAR(20) NOT NULL,"
@@ -178,16 +179,16 @@ class dbHandler():
                                   "ENGINE=InnoDB DEFAULT CHARSET=utf8")
         '''
         ADD_TRAFFIC_INFO_DDL = ("INSERT INTO " + self.DB_USER_REPORTED_TABLE + " "
-                                "(phone_num, latitude, longitude, report_time, type, level, detail) "
-                                "VALUES ({0}, {1}, {2}, \"{3}\", \"{4}\", \"{5}\", \"{6}\")")
+                                "(phone_num, latitude, longitude, address, report_time, type, level, detail) "
+                                "VALUES ({0}, {1}, {2}, \"{3}\", \"{4}\", \"{5}\", \"{6}\", \"{7}\")")
         addResult = False
         mysqlCon = self.create_db_connection()
         #self.create_db_tables(mysqlCon.cursor())
         #mysqlCon.commit()
         try:
-            print(ADD_TRAFFIC_INFO_DDL.format(phoneNum, latitude, longitude, timestamp, type, level, detail))
-            mysqlCon.cursor().execute(ADD_TRAFFIC_INFO_DDL.format(phoneNum, latitude,
-                                      longitude, timestamp, type, level, detail)) 
+            print(ADD_TRAFFIC_INFO_DDL.format(phoneNum, latitude, longitude, address, timestamp, type, level, detail))
+            mysqlCon.cursor().execute(ADD_TRAFFIC_INFO_DDL.format(phoneNum, latitude, longitude, 
+                                      address, timestamp, type, level, detail)) 
             mysqlCon.commit()
             addResult = True
             print('New reported info added: ', phoneNum)
@@ -320,8 +321,8 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
             response = {"retTrafficInfo":[]}
             for infoItem in reportedInfo:
                 jArrayItem = {"phoneNum":infoItem[0], "latitude":infoItem[1], "longitude":infoItem[2],
-                              "dateTime":infoItem[3].strftime("%Y-%m-%d %H:%M:%S"), "type":infoItem[4],
-                              "level":infoItem[5], "detail":infoItem[6]}
+                              "address":infoItem[3], "dateTime":infoItem[4].strftime("%Y-%m-%d %H:%M:%S"),
+                              "type":infoItem[5], "level":infoItem[6], "detail":infoItem[7]}
                 print(jArrayItem)
                 response["retTrafficInfo"].append(jArrayItem)
         elif "uploadTrafficInfo" in jdata:
@@ -329,12 +330,13 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
             phoneNum = jdata["uploadTrafficInfo"]["phoneNum"]
             latitude = jdata["uploadTrafficInfo"]["latitude"]
             longitude = jdata["uploadTrafficInfo"]["longitude"]
+            address = jdata["uploadTrafficInfo"]["address"]
             timestamp = jdata["uploadTrafficInfo"]["dateTime"]
             type = jdata["uploadTrafficInfo"]["type"]
             level = jdata["uploadTrafficInfo"]["level"]
             detail = jdata["uploadTrafficInfo"]["detail"]
             hDB = dbHandler(db_user, db_pwd, db_addr, db_name)
-            addResult = hDB.add_traffic_info(phoneNum, latitude, longitude, timestamp, type, level, detail)
+            addResult = hDB.add_traffic_info(phoneNum, latitude, longitude, address, timestamp, type, level, detail)
             if(addResult == True):
                 response = {"uploadResult":0, "phoneNum":phoneNum}
             else:
